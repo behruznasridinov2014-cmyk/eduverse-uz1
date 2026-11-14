@@ -119,6 +119,8 @@ export const lessonRoomsTable = pgTable(
     hostId: uuid("host_id").notNull().references(() => usersTable.id, { onDelete: "cascade" }),
     subject: text("subject").notNull().default(""),
     title: text("title").notNull().default(""),
+    // Topic from the class textbook (course-data key) shown in the lesson.
+    courseKey: text("course_key"),
     status: lessonRoomStatusEnum("status").notNull().default("open"),
     startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
     endedAt: timestamp("ended_at", { withTimezone: true }),

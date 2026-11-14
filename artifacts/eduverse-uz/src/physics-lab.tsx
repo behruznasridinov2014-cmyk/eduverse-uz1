@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { User } from '@workspace/api-client-react';
 import type { Language } from './school-data';
 import { PendulumLabWork } from './lab-work';
+import { CollisionLab } from './collision-lab';
 
 const t = (language: Language, uz: string, ru: string, en: string) =>
   language === 'Uzbek' ? uz : language === 'Русский' ? ru : en;
@@ -12,15 +13,16 @@ const t = (language: Language, uz: string, ru: string, en: string) =>
  * sliders is what they would measure in a real experiment.
  */
 export function PhysicsLab({ language, user }: { language: Language; user: User }) {
-  const [mode, setMode] = useState<'pendulum' | 'circuit' | 'work'>('pendulum');
+  const [mode, setMode] = useState<'pendulum' | 'circuit' | 'collision' | 'work'>('collision');
   return (
     <div className="stack">
       <div className="row">
         <button type="button" className={`btn ${mode === 'pendulum' ? 'primary' : ''}`} onClick={() => setMode('pendulum')}>{t(language, 'Mayatnik', 'Маятник', 'Pendulum')}</button>
         <button type="button" className={`btn ${mode === 'circuit' ? 'primary' : ''}`} onClick={() => setMode('circuit')}>{t(language, 'Elektr zanjiri', 'Электрическая цепь', 'Electric circuit')}</button>
+        <button type="button" className={`btn ${mode === 'collision' ? 'primary' : ''}`} onClick={() => setMode('collision')}>{t(language, 'Mashinalar to‘qnashuvi', 'Столкновение машин', 'Car crash')}</button>
         <button type="button" className={`btn ${mode === 'work' ? 'primary' : ''}`} onClick={() => setMode('work')}>★ {t(language, 'Laboratoriya ishi (baho bilan)', 'Лабораторная работа (с оценкой)', 'Lab work (graded)')}</button>
       </div>
-      {mode === 'pendulum' ? <Pendulum language={language} /> : mode === 'circuit' ? <Circuit language={language} /> : <PendulumLabWork language={language} user={user} />}
+      {mode === 'pendulum' ? <Pendulum language={language} /> : mode === 'circuit' ? <Circuit language={language} /> : mode === 'collision' ? <CollisionLab language={language} /> : <PendulumLabWork language={language} user={user} />}
     </div>
   );
 }
@@ -41,7 +43,7 @@ function Slider({ label, value, min, max, step, unit, onChange }: { label: strin
   );
 }
 
-function Pendulum({ language }: { language: Language }) {
+export function Pendulum({ language }: { language: Language }) {
   const canvas = useRef<HTMLCanvasElement | null>(null);
   const [length, setLength] = useState(1.0);
   const [angle, setAngle] = useState(30);
@@ -159,7 +161,7 @@ function Pendulum({ language }: { language: Language }) {
   );
 }
 
-function Circuit({ language }: { language: Language }) {
+export function Circuit({ language }: { language: Language }) {
   const canvas = useRef<HTMLCanvasElement | null>(null);
   const [voltage, setVoltage] = useState(6);
   const [resistance, setResistance] = useState(12);

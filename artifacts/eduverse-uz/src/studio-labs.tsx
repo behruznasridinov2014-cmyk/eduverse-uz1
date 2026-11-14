@@ -84,9 +84,9 @@ function solidMath(solid: Solid, a: number, h: number): { volume: number; area: 
   }
 }
 
-export function MathLab({ language }: { language: Language }) {
+export function MathLab({ language, initial = 'cube' }: { language: Language; initial?: Solid }) {
   const canvas = useRef<HTMLCanvasElement | null>(null);
-  const [solid, setSolid] = useState<Solid>('cube');
+  const [solid, setSolid] = useState<Solid>(initial);
   const [a, setA] = useState(2);
   const [h, setH] = useState(3);
   const [filled, setFilled] = useState(true);

@@ -37,6 +37,10 @@ export const usersTable = pgTable(
     loginNormalized: text("login_normalized").notNull(),
     passwordHash: text("password_hash").notNull(),
     role: accountRoleEnum("role").notNull().default("student"),
+    /** Contact phone (parents), set by the school on import. */
+    phone: text("phone"),
+    /** True for accounts created by the school: the first sign-in asks to change the password. */
+    mustChangePassword: boolean("must_change_password").notNull().default(false),
     /** AES-256-GCM encrypted TOTP secret (base32 outside crypto layer). */
     twoFactorSecret: text("two_factor_secret"),
     /** Telegram chat id that is allowed to receive 2FA codes. */

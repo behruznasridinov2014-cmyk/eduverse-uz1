@@ -32,7 +32,7 @@ import type { AppLanguage } from './localization';
 import { getAuthErrorMessage, useAuth } from './auth-context';
 import { QrApprovePanel, QrSignInPanel, QR_COPY } from './qr-login';
 import { QrScannerButton } from './qr-scanner';
-import { TelegramConnect } from './school-tools';
+import { PasswordChange, TelegramConnect, useMustChangePassword } from './school-tools';
 
 type AuthCopy = {
   signIn: string;
@@ -1096,6 +1096,7 @@ export function ProfilePage({
   }
 
   const locale = language === 'Русский' ? 'ru-RU' : 'en-GB';
+  const mustChange = useMustChangePassword();
   const text = (uz: string, ru: string, en: string) => (language === 'Uzbek' ? uz : language === 'Русский' ? ru : en);
   return (
     <section className="profile" data-locale-preserve="true">
@@ -1115,6 +1116,7 @@ export function ProfilePage({
           <div className="profile-row"><span>{copy.createdAt}</span><b>{new Date(user.createdAt).toLocaleDateString(locale, { dateStyle: 'long' })}</b></div>
         </div>
       </div>
+      <PasswordChange language={language} mustChange={mustChange} />
       <TelegramConnect language={language} />
       <div className="panel">
         <h2>{text('Boshqa qurilmada kirish', 'Вход на другом устройстве', 'Sign in on another device')}</h2>

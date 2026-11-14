@@ -214,7 +214,7 @@ function blueprintFor(subject: string): SubjectBlueprint {
 /* Model call                                                                  */
 /* -------------------------------------------------------------------------- */
 
-type ChatMessage = { role: "system" | "user"; content: string };
+type ChatMessage = { role: "system" | "user"; content: string | Array<Record<string, unknown>> };
 
 async function callModel(messages: ChatMessage[]): Promise<string | null> {
   if (!isAiConfigured()) return null;
@@ -784,6 +784,59 @@ export async function generateLessonPlan(input: { subject: string; topic: string
     homework: str(parsed.homework),
     experiment: str(parsed.experiment),
     source: "ai",
+  };
+}
+
+export type HomeworkCheck = {
+  verdict: "self" | "unclear" | "ai";
+  confidence: number;
+  handwritten: boolean;
+  matchesTask: boolean;
+  reasons: string[];
+  advice: string;
+};
+
+/**
+ * Looks at the notebook photos and the student's own explanation and gives
+ * the TEACHER a hint whether the work looks self-made or copied from an AI.
+ * It is advice, never proof: no tool can prove that a text was written by AI.
+ */
+export async function analyzeHomework(input: {
+  subject: string;
+  task: string;
+  studentName: string;
+  explanation: string;
+  photos: string[];
+}): Promise<HomeworkCheck | null> {
+  if (!isAiConfigured()) return null;
+  const content: Array<Record<string, unknown>> = [
+    {
+      type: "text",
+      text: `Предмет: ${input.subject}. Задание: ${input.task}. Ученик 7 класса: ${input.studentName}.\nОбъяснение ученика своими словами: «${input.explanation.slice(0, 1500)}».\nФото тетради прикреплены (${input.photos.length}).`,
+    },
+    ...input.photos.slice(0, 2).map((url) => ({ type: "image_url", image_url: { url } })),
+  ];
+  const raw = await callModel([
+    {
+      role: "system",
+      content:
+        'Ты помощник учителя. Оцени, похоже ли, что ученик сделал работу сам. Признаки самостоятельной работы: решение написано от руки в тетради, есть исправления и черновые шаги, объяснение простым детским языком, совпадает с решением на фото. Признаки ответа ИИ: идеальный «взрослый» текст с терминами не по возрасту, шаблонные фразы, объяснение не совпадает с тетрадью, на фото напечатанный текст или экран. Это только подсказка учителю, не обвинение. Отвечай строго JSON: {"verdict":"self|unclear|ai","confidence":0-100,"handwritten":true|false,"matchesTask":true|false,"reasons":["...","..."],"advice":"что спросить у ученика"}. Пиши по-русски кратко.',
+    },
+    { role: "user", content },
+  ]);
+  if (!raw) return null;
+  const parsed = safeJsonObject(raw);
+  if (!parsed) return null;
+  const verdict = parsed.verdict === "self" || parsed.verdict === "ai" ? parsed.verdict : "unclear";
+  const confidence = Math.max(0, Math.min(100, Math.round(Number(parsed.confidence) || 50)));
+  return {
+    verdict,
+    // never claim certainty: an AI detector cannot prove authorship
+    confidence: Math.min(confidence, 90),
+    handwritten: parsed.handwritten === true,
+    matchesTask: parsed.matchesTask !== false,
+    reasons: Array.isArray(parsed.reasons) ? parsed.reasons.map((item) => str(item)).filter(Boolean).slice(0, 4) : [],
+    advice: str(parsed.advice),
   };
 }
 

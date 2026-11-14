@@ -36,6 +36,15 @@ import {
 
 const router: IRouter = Router();
 
+/**
+ * Signed-in limits are counted per session, not per IP address: a whole
+ * school shares one public address and would otherwise share one limit.
+ */
+const perSession = (req: { cookies?: Record<string, unknown>; ip?: string }) => {
+  const token = req.cookies?.["eduverse.sid"];
+  return typeof token === "string" && token ? `sid:${token.slice(0, 64)}` : `ip:${req.ip ?? "unknown"}`;
+};
+
 type RequestUser = { id: string; role: AccountRole };
 
 const ATTENDANCE_STATUSES = ["present", "absent", "late", "excused"] as const;
@@ -1175,7 +1184,7 @@ router.get("/classes/:classId/journal", requireAuthenticatedRole(...staffRoles),
 /* The viewer's own attendance summary                                         */
 /* -------------------------------------------------------------------------- */
 
-const tutorLimiter = createRateLimiter(30, 10 * 60 * 1000, "Too many AI questions. Wait a few minutes.", "ai-tutor");
+const tutorLimiter = createRateLimiter(30, 10 * 60 * 1000, "Too many AI questions. Wait a few minutes.", "ai-tutor", perSession);
 
 /**
  * AI tutor: answers a free question, grounded in a topic when one is given.

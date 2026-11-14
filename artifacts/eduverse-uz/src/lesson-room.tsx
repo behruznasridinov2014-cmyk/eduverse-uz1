@@ -48,6 +48,9 @@ import {
 } from 'lucide-react';
 import { TopicModels } from './topic-library';
 import { AiTutor } from './extras';
+import { LessonBoard, type BoardStroke } from './lesson-board';
+import { CourseScene3D } from './course';
+import { COURSE, courseTopicByKey } from './course-data';
 import { loadServerIceServers, useLessonMesh } from './lesson-mesh';
 import type { Language } from './school-data';
 import { friendlyError } from './errors';
@@ -69,7 +72,8 @@ export function LessonRoomPage({
   const isTeacher = user.role === 'teacher' || user.role === 'school_director' || user.role === 'school_admin';
 
   const [topics, setTopics] = useState<LessonTopic[]>([]);
-  const [selectedTopicId, setSelectedTopicId] = useState(prefillTopicId ?? '');
+  const prefillCourse = prefillTopicId?.startsWith('course:') ? prefillTopicId.slice(7) : null;
+  const [selectedTopicId, setSelectedTopicId] = useState(prefillCourse ? `course:${prefillCourse}` : prefillTopicId ?? '');
   useEffect(() => {
     void loadServerIceServers();
   }, []);
@@ -132,10 +136,20 @@ export function LessonRoomPage({
     setBusy(true);
     setError('');
     try {
+      const courseKey = selectedTopicId.startsWith('course:') ? selectedTopicId.slice(7) : null;
+      const course = courseKey ? courseTopicByKey(courseKey) : null;
       const response = await createLessonRoom({
-        ...(selectedTopicId ? { topicId: selectedTopicId } : {}),
+        ...(selectedTopicId && !courseKey ? { topicId: selectedTopicId } : {}),
         ...(selectedTopic ? { subject: selectedTopic.subject, title: selectedTopic.title } : {}),
+        ...(course ? { subject: course.book.title, title: `§${course.topic.code} ${course.topic.title}` } : {}),
       });
+      if (course) {
+        await customFetch(`/api/rooms/${response.room.id}/topic`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ courseKey, title: `§${course.topic.code} ${course.topic.title}` }),
+        }).catch(() => {});
+      }
       const joined = await joinLessonRoom(response.room.id);
       setRoom(joined.room);
       setParticipants(joined.participants);
@@ -155,6 +169,18 @@ export function LessonRoomPage({
       setRoom(joined.room);
       setParticipants(joined.participants);
       setMode(target.hostId === user.id ? 'host' : 'guest');
+    } catch (requestError) {
+      setError(describe(requestError, language));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function endAll() {
+    setBusy(true);
+    try {
+      await customFetch('/api/rooms/end-all', { method: 'POST' });
+      await loadOpenRooms();
     } catch (requestError) {
       setError(describe(requestError, language));
     } finally {
@@ -216,7 +242,12 @@ export function LessonRoomPage({
         {error && <div className="notice" role="alert">{error}</div>}
         {openRooms.length > 0 && (
           <section className="panel open-rooms">
-            <div className="section-head"><h2><Video size={16} /> {copy.openRooms}</h2></div>
+            <div className="section-head">
+              <h2><Video size={16} /> {copy.openRooms}</h2>
+              {isTeacher && openRooms.some((item) => item.hostId === user.id) && (
+                <button type="button" className="btn small danger" disabled={busy} onClick={() => void endAll()}>{copy.endAll}</button>
+              )}
+            </div>
             <div className="stack">
               {openRooms.map((item) => (
                 <div className="open-room-row" key={item.id}>
@@ -244,6 +275,11 @@ export function LessonRoomPage({
                 <label htmlFor="host-topic">{copy.chooseTopic}</label>
                 <select id="host-topic" value={selectedTopicId} onChange={(event) => setSelectedTopicId(event.target.value)}>
                   <option value="">{copy.noTopic}</option>
+                  {COURSE.map((book) => (
+                    <optgroup key={book.id} label={book.title}>
+                      {book.topics.map((item) => <option key={item.key} value={`course:${item.key}`}>§{item.code} {item.title}</option>)}
+                    </optgroup>
+                  ))}
                   {[...new Map(topics.map((topic) => [`${topic.subject} · ${topic.title}`, topic])).values()].map((topic) => (
                     <option key={topic.id} value={topic.id}>
                       {topic.subject} · {topic.title}
@@ -348,7 +384,13 @@ function RoomView({
 }) {
   const copy = COPY[language];
   const localVideo = useRef<HTMLVideoElement | null>(null);
-  const [chat, setChat] = useState<Array<{ from: string; text: string }>>([]);
+  const [chat, setChat] = useState<Array<{ from: string; text: string; mine: boolean; at: number }>>([]);
+  const [courseKey, setCourseKey] = useState<string | null>(null);
+  const [strokes, setStrokes] = useState<BoardStroke[]>([]);
+  const [penHolder, setPenHolder] = useState<string | null>(null);
+  const [boardOpen, setBoardOpen] = useState(false);
+  const chatEnd = useRef<HTMLDivElement | null>(null);
+  useEffect(() => { chatEnd.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }, [chat.length]);
   const [chatDraft, setChatDraft] = useState('');
   const [results, setResults] = useState<{ ranking: RankRow[] }>({ ranking: [] });
   const [myTest, setMyTest] = useState<{ items: TestItemView[] } | null>(null);
@@ -363,8 +405,9 @@ function RoomView({
   /* ---- Topic of the lesson (3D object + facts), shared with everybody ---- */
   const loadRoomTopic = useCallback(async () => {
     try {
-      const response = await customFetch<{ topic: LessonTopic | null }>(`/api/rooms/${room.id}/topic`, { method: 'GET' });
+      const response = await customFetch<{ topic: LessonTopic | null; courseKey?: string | null }>(`/api/rooms/${room.id}/topic`, { method: 'GET' });
       setTopic(response.topic);
+      setCourseKey(response.courseKey ?? null);
     } catch {
       /* the lesson works without a topic */
     }
@@ -377,12 +420,15 @@ function RoomView({
   async function changeTopic(topicId: string) {
     setError('');
     try {
-      const response = await customFetch<{ topic: LessonTopic | null }>(`/api/rooms/${room.id}/topic`, {
+      const key = topicId.startsWith('course:') ? topicId.slice(7) : null;
+      const course = key ? courseTopicByKey(key) : null;
+      const response = await customFetch<{ topic: LessonTopic | null; courseKey?: string | null }>(`/api/rooms/${room.id}/topic`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ topicId: topicId || null }),
+        body: JSON.stringify(course ? { courseKey: key, title: `§${course.topic.code} ${course.topic.title}` } : { topicId: topicId || null }),
       });
       setTopic(response.topic);
+      setCourseKey(response.courseKey ?? null);
     } catch (requestError) {
       setError(describe(requestError, language));
     }
@@ -490,12 +536,25 @@ function RoomView({
             if (event === 'individual-tests-started' || event === 'test-started') void loadMyTest();
             if (event === 'ended') onRefresh();
             if (event === 'topic') void loadRoomTopic();
+            if (event === 'board') {
+              const stroke = (message.payload as { stroke?: BoardStroke })?.stroke;
+              if (stroke && Array.isArray(stroke.points)) {
+                setStrokes((current) => (current.some((item) => item.id === stroke.id) ? current : [...current, { ...stroke, by: message.from }].slice(-400)));
+                setBoardOpen(true);
+              }
+            }
+            if (event === 'board-clear') setStrokes([]);
+            if (event === 'board-pen') {
+              const holder = (message.payload as { userId?: string | null })?.userId ?? null;
+              setPenHolder(holder);
+              if (holder) setBoardOpen(true);
+            }
             if (event === 'test-progress') void loadResults();
             continue;
           }
           if (message.kind === 'chat') {
             const text = (message.payload as { text?: string })?.text;
-            if (text) setChat((current) => [...current, { from: username, text }]);
+            if (text) setChat((current) => [...current, { from: username, text, mine: false, at: Date.now() }].slice(-200));
             continue;
           }
           await handleMeshSignal(message.from, message.kind, message.payload as SignalPayload);
@@ -633,11 +692,27 @@ function RoomView({
     onLeave();
   }
 
+  const canDraw = isHost || penHolder === user.id;
+  function sendStroke(stroke: BoardStroke) {
+    const own = { ...stroke, by: user.id };
+    setStrokes((current) => [...current, own].slice(-400));
+    void sendLessonSignal(room.id, { to: 'all', kind: 'control', payload: { event: 'board', stroke: own } }).catch(() => {});
+  }
+  function clearBoard() {
+    setStrokes([]);
+    void sendLessonSignal(room.id, { to: 'all', kind: 'control', payload: { event: 'board-clear' } }).catch(() => {});
+  }
+  function givePen(userId: string | null) {
+    setPenHolder(userId);
+    setBoardOpen(true);
+    void sendLessonSignal(room.id, { to: 'all', kind: 'control', payload: { event: 'board-pen', userId } }).catch(() => {});
+  }
+
   function sendChat(event: React.FormEvent) {
     event.preventDefault();
     if (!chatDraft.trim()) return;
     void sendLessonSignal(room.id, { to: 'all', kind: 'chat', payload: { text: chatDraft.trim() } }).catch(() => {});
-    setChat((current) => [...current, { from: user.username, text: chatDraft.trim() }]);
+    setChat((current) => [...current, { from: user.username, text: chatDraft.trim(), mine: true, at: Date.now() }].slice(-200));
     setChatDraft('');
   }
 
@@ -720,13 +795,38 @@ function RoomView({
               ))}
           </div>
 
-          {(topic || isHost) && (
+          {(() => {
+            const course = courseKey ? courseTopicByKey(courseKey) : null;
+            if (!course) return null;
+            return (
+              <section className="panel lesson-course">
+                <div className="eyebrow">{course.book.title} · §{course.topic.code}</div>
+                <h2>{course.topic.title}</h2>
+                <p className="lesson-course-essence">{course.topic.essence}</p>
+                <p className="muted">{course.topic.sceneHint}</p>
+                <CourseScene3D scene={course.topic.scene} language={language} />
+              </section>
+            );
+          })()}
+
+          {(isHost || boardOpen) && (
+            boardOpen
+              ? <LessonBoard strokes={strokes} canDraw={canDraw} isHost={isHost} penHolder={penHolder && penHolder !== user.id ? penHolder : null} language={language} onStroke={sendStroke} onClear={clearBoard} />
+              : <button type="button" className="btn lesson-board-open" onClick={() => setBoardOpen(true)}>{copy.openBoard}</button>
+          )}
+
+          {(topic || (isHost && !courseKey)) && (
             <section className="panel lesson-topic-panel">
               {isHost && (
                 <div className="control lesson-topic-picker">
                   <label htmlFor="room-topic">{copy.chooseTopic}</label>
-                  <select id="room-topic" value={topic?.id ?? ''} onChange={(event) => void changeTopic(event.target.value)}>
+                  <select id="room-topic" value={topic?.id ?? (courseKey ? `course:${courseKey}` : '')} onChange={(event) => void changeTopic(event.target.value)}>
                     <option value="">{copy.noTopic}</option>
+                    {COURSE.map((book) => (
+                      <optgroup key={book.id} label={book.title}>
+                        {book.topics.map((item) => <option key={item.key} value={`course:${item.key}`}>§{item.code} {item.title}</option>)}
+                      </optgroup>
+                    ))}
                     {[...new Map(topics.map((item) => [`${item.subject} · ${item.title}`, item])).values()].map((item) => (
                       <option key={item.id} value={item.id}>{item.subject} · {item.title}</option>
                     ))}
@@ -793,6 +893,9 @@ function RoomView({
                       <Camera size={12} className={participant.cameraOn ? 'on' : 'off'} />
                       <Mic size={12} className={participant.micOn ? 'on' : 'off'} />
                       {participant.sharingScreen && <MonitorUp size={12} className="on" />}
+                      {isHost && participant.userId !== user.id && (
+                        <button type="button" className={`pen-toggle ${penHolder === participant.userId ? 'on' : ''}`} title={copy.givePen} onClick={() => givePen(penHolder === participant.userId ? null : participant.userId)}>✎</button>
+                      )}
                       <span className={`lesson-person-link ${connected ? 'on' : 'off'}`} title={connected ? copy.connected : copy.connecting} />
                     </span>
                   </div>
@@ -801,27 +904,31 @@ function RoomView({
             </div>
           </section>
 
-          <AiTutor language={language} topicId={topic?.id ?? null} compact />
+          {user.role === 'student' && <AiTutor language={language} topicId={topic?.id ?? null} compact />}
 
           <section className="panel">
             <div className="section-head"><h2>{copy.chat}</h2></div>
             <div className="lesson-chat">
               {chat.length === 0 && <p className="muted">{copy.chatEmpty}</p>}
               {chat.map((message, index) => (
-                <div className="lesson-chat-line" key={index}>
-                  <b>{message.from}:</b> {message.text}
+                <div className={`chat-msg ${message.mine ? 'mine' : ''}`} key={index}>
+                  {!message.mine && <span className="chat-author">{message.from}</span>}
+                  <span className="chat-text">{message.text}</span>
+                  <span className="chat-time">{new Date(message.at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
                 </div>
               ))}
+              <div ref={chatEnd} />
             </div>
-            <form className="row" onSubmit={sendChat} style={{ gap: 6 }}>
+            <form className="chat-form" onSubmit={sendChat}>
               <input
                 className="input"
                 value={chatDraft}
+                maxLength={500}
                 onChange={(event) => setChatDraft(event.target.value)}
                 placeholder={copy.chatPlaceholder}
               />
-              <button type="submit" className="btn small primary" aria-label={copy.chat}>
-                <Send size={14} />
+              <button type="submit" className="btn primary" disabled={!chatDraft.trim()} aria-label={copy.chat}>
+                <Send size={15} />
               </button>
             </form>
           </section>
@@ -1139,6 +1246,9 @@ const COPY: Record<Language, Record<string, string>> = {
     chat: 'Чат урока',
     chatEmpty: 'Сообщений пока нет.',
     openRooms: 'Ваши открытые уроки',
+    endAll: 'Завершить все уроки',
+    openBoard: '✎ Открыть общую доску',
+    givePen: 'Дать ученику писать на доске',
     largeClass: 'Режим большого класса: ученики видят и слышат учителя, учитель видит всех. Так урок работает даже на слабом интернете.',
     rejoin: 'Вернуться',
     testsSent: 'Тесты отправлены ученикам: {n}. Каждый видит только свой вопрос.',
@@ -1209,6 +1319,9 @@ const COPY: Record<Language, Record<string, string>> = {
     chat: 'Dars chati',
     chatEmpty: 'Hozircha xabar yo‘q.',
     openRooms: 'Ochiq darslaringiz',
+    endAll: 'Barcha darslarni yakunlash',
+    openBoard: '✎ Umumiy doskani ochish',
+    givePen: 'O‘quvchiga doskada yozishga ruxsat berish',
     largeClass: 'Katta sinf rejimi: o‘quvchilar o‘qituvchini ko‘radi va eshitadi, o‘qituvchi hammani ko‘radi. Sekin internetda ham dars ishlaydi.',
     rejoin: 'Qaytish',
     testsSent: 'Testlar o‘quvchilarga yuborildi: {n}. Har kim faqat o‘z savolini ko‘radi.',
@@ -1279,6 +1392,9 @@ const COPY: Record<Language, Record<string, string>> = {
     chat: 'Lesson chat',
     chatEmpty: 'No messages yet.',
     openRooms: 'Your open lessons',
+    endAll: 'End all lessons',
+    openBoard: '✎ Open the shared board',
+    givePen: 'Let this student draw on the board',
     largeClass: 'Large class mode: students see and hear the teacher, the teacher sees everyone. Works even on slow internet.',
     rejoin: 'Return',
     testsSent: 'Tests sent to {n} students. Each one sees only their own question.',

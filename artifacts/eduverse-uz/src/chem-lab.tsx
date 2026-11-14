@@ -203,7 +203,7 @@ const REACTIONS: Reaction[] = [
 /* Ball-and-stick renderer (canvas, no WebGL needed — runs on weak PCs)       */
 /* ------------------------------------------------------------------------ */
 
-function MoleculeView({ molecule, height = 320 }: { molecule: Molecule; height?: number }) {
+export function MoleculeView({ molecule, height = 320 }: { molecule: Molecule; height?: number }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const angle = useRef({ x: -0.35, y: 0.5, auto: true });
   const drag = useRef<{ x: number; y: number } | null>(null);
@@ -484,7 +484,7 @@ export function ChemLabPage({ language, user }: { language: Language; user: User
         </div>
       )}
 
-      <AiTutor language={language} topicId={null} />
+      {user.role === 'student' && <AiTutor language={language} topicId={null} />}
     </section>
   );
 }
@@ -492,7 +492,7 @@ export function ChemLabPage({ language, user }: { language: Language; user: User
 void t;
 
 /** "How it looks in real life": gas in a jar, liquid in a glass, or crystals. */
-function RealLife({ molecule, language }: { molecule: Molecule; language: Language }) {
+export function RealLife({ molecule, language }: { molecule: Molecule; language: Language }) {
   const state = molecule.state.English.toLowerCase();
   const kind = state.startsWith('gas') ? 'gas' : state.startsWith('liquid') ? 'liquid' : 'solid';
   const tint = molecule.id === 'o2' ? '#9FC5FF' : molecule.id === 'h2s' || molecule.id === 'so2' ? '#E8DC8A' : molecule.id === 'c2h5oh' ? '#E8F0FF' : '#BFD8FF';
@@ -508,5 +508,51 @@ function RealLife({ molecule, language }: { molecule: Molecule; language: Langua
         <p>{molecule.life ? molecule.life[language] : ''}</p>
       </div>
     </section>
+  );
+}
+
+/** Embeddable views used by the class textbook page. */
+export function MoleculeById({ id, language, height = 300 }: { id: string; language: Language; height?: number }) {
+  const molecule = MOLECULES.find((item) => item.id === id);
+  if (!molecule) return null;
+  return (
+    <div className="stack">
+      <div className="panel chem-stage">
+        <MoleculeView molecule={molecule} height={height} />
+        <div className="chem-caption"><b>{molecule.name[language]}</b> <span className="chem-formula">{molecule.formula}</span></div>
+      </div>
+      <RealLife molecule={molecule} language={language} />
+    </div>
+  );
+}
+
+export function ReactionView({ a, b, language }: { a: string; b: string; language: Language }) {
+  const reaction = REACTIONS.find((item) => (item.a === a && item.b === b) || (item.a === b && item.b === a));
+  const [played, setPlayed] = useState(0);
+  if (!reaction) return null;
+  const byId = (id: string) => MOLECULES.find((m) => m.id === id)!;
+  return (
+    <div className="panel chem-stage">
+      <div className="chem-mix">
+        <b>{byId(a).formula} + {byId(b).formula}</b>
+        <button type="button" className="btn primary" onClick={() => setPlayed((n) => n + 1)}><Sparkles /> {language === 'Uzbek' ? 'Aralashtirish' : language === 'Русский' ? 'Смешать' : 'Mix'}</button>
+      </div>
+      {played === 0 ? (
+        <div className="chem-flask-row">
+          <div className="chem-mini"><MoleculeView molecule={byId(a)} height={170} /><small>{byId(a).formula}</small></div>
+          <div className="chem-mini"><MoleculeView molecule={byId(b)} height={170} /><small>{byId(b).formula}</small></div>
+        </div>
+      ) : (
+        <div className={`chem-reaction effect-${reaction.effect}`} key={played}>
+          <div className="chem-equation">{reaction.equation}</div>
+          <div className="chem-flask-row">
+            {reaction.products.map((id) => (
+              <div className="chem-mini" key={id}><MoleculeView molecule={byId(id)} height={170} /><small>{byId(id).formula} · {byId(id).name[language]}</small></div>
+            ))}
+          </div>
+          <p>{reaction.note[language]}</p>
+        </div>
+      )}
+    </div>
   );
 }

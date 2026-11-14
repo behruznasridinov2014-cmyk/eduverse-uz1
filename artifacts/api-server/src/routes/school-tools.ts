@@ -13,12 +13,22 @@ import {
   type AccountRole,
 } from "@workspace/db";
 import { createRateLimiter, normalizeUsername, requireAuthenticatedRole } from "./auth";
+import { hashPassword as hashAccountPassword, verifyPassword } from "../lib/auth-crypto";
 import { cleanText, isGlobalAdminRole, isValidUuid } from "../lib/school-access";
 import { sendTelegramMessage, telegramBotConfigured, telegramBotUsername, telegramWebhookSecret } from "../lib/telegram";
 import { generateLessonPlan, isAiConfigured } from "../lib/ai-content";
 import { logger } from "../lib/logger";
 
 const router: IRouter = Router();
+
+/**
+ * Signed-in limits are counted per session, not per IP address: a whole
+ * school shares one public address and would otherwise share one limit.
+ */
+const perSession = (req: { cookies?: Record<string, unknown>; ip?: string }) => {
+  const token = req.cookies?.["eduverse.sid"];
+  return typeof token === "string" && token ? `sid:${token.slice(0, 64)}` : `ip:${req.ip ?? "unknown"}`;
+};
 type RequestUser = { id: string; role: AccountRole };
 const viewerOf = (res: Response) => res.locals.authenticatedUser as RequestUser;
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -70,7 +80,16 @@ async function canManageSchool(viewer: RequestUser, schoolId: string): Promise<b
 /* -------------------------------------------------------------------------- */
 
 type ImportRole = "student" | "teacher" | "parent";
-type ImportRow = { role: ImportRole; name: string; className?: string; childName?: string };
+type ImportRow = { role: ImportRole; name: string; className?: string; childName?: string; phone?: string };
+
+/** "+998 90 123-45-67", "90 1234567" → "+998901234567"; anything else is dropped. */
+function normalizePhone(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const digits = value.replace(/\D/g, "");
+  if (digits.length === 9) return `+998${digits}`;
+  if (digits.length === 12 && digits.startsWith("998")) return `+${digits}`;
+  return undefined;
+}
 
 function readRows(body: unknown): ImportRow[] {
   const raw = isRecord(body) && Array.isArray(body.rows) ? body.rows : [];
@@ -85,6 +104,7 @@ function readRows(body: unknown): ImportRow[] {
       name,
       className: cleanText(item.className, 40) ?? undefined,
       childName: cleanText(item.childName, 80) ?? undefined,
+      phone: normalizePhone(item.phone),
     });
   }
   return rows;
@@ -138,7 +158,7 @@ router.post(
       return id;
     };
 
-    const created: Array<{ role: ImportRole; name: string; className: string; login: string; password: string }> = [];
+    const created: Array<{ role: ImportRole; name: string; className: string; login: string; password: string; phone: string }> = [];
     const skipped: Array<{ name: string; reason: string }> = [];
     const studentIdsByName = new Map<string, string>();
 
@@ -162,6 +182,8 @@ router.post(
               loginNormalized: login.toLowerCase(),
               passwordHash,
               role: row.role,
+              phone: row.phone ?? null,
+              mustChangePassword: true,
             })
             .returning({ id: usersTable.id, username: usersTable.username, login: usersTable.login });
           account = inserted ?? null;
@@ -194,7 +216,7 @@ router.post(
         if (childId) await db.insert(parentLinksTable).values({ parentId: account.id, studentId: childId, createdBy: viewer.id }).onConflictDoNothing();
         else skipped.push({ name: row.name, reason: "child-not-found" });
       }
-      created.push({ role: row.role, name: account.username, className: row.className ?? "", login: account.login, password });
+      created.push({ role: row.role, name: account.username, className: row.className ?? "", login: account.login, password, phone: row.phone ?? "" });
     }
     res.status(201).json({ created, skipped });
   },
@@ -273,7 +295,7 @@ router.post("/auth/2fa/telegram/webhook", async (req, res, next) => {
 /* 3. AI lesson plan from a textbook paragraph                                 */
 /* -------------------------------------------------------------------------- */
 
-const planLimiter = createRateLimiter(20, 10 * 60 * 1000, "Too many lesson plans. Wait a few minutes.", "ai-plan");
+const planLimiter = createRateLimiter(20, 10 * 60 * 1000, "Too many lesson plans. Wait a few minutes.", "ai-plan", perSession);
 
 router.post(
   "/ai/lesson-plan",
@@ -379,6 +401,39 @@ router.get("/labs/reports", requireAuthenticatedRole("student", "teacher", "scho
     .orderBy(desc(labReportsTable.createdAt))
     .limit(100);
   res.json({ reports });
+});
+
+/* -------------------------------------------------------------------------- */
+/* 5. Password change (the name is set by the school and cannot be changed)    */
+/* -------------------------------------------------------------------------- */
+
+const passwordLimiter = createRateLimiter(10, 15 * 60 * 1000, "Too many attempts. Try again later.", "password-change", perSession);
+
+router.get("/me/security", requireAuthenticatedRole(...everyRole), async (_req, res) => {
+  const viewer = viewerOf(res);
+  const [row] = await db.select({ must: usersTable.mustChangePassword }).from(usersTable).where(eq(usersTable.id, viewer.id)).limit(1);
+  res.json({ mustChangePassword: Boolean(row?.must) });
+});
+
+router.post("/me/password", requireAuthenticatedRole(...everyRole), passwordLimiter, async (req, res) => {
+  const viewer = viewerOf(res);
+  const current = isRecord(req.body) && typeof req.body.current === "string" ? req.body.current : "";
+  const next = isRecord(req.body) && typeof req.body.next === "string" ? req.body.next : "";
+  if (next.length < 8 || next.length > 128) {
+    res.status(400).json({ error: "The new password must be 8 to 128 characters." });
+    return;
+  }
+  const [account] = await db.select({ hash: usersTable.passwordHash, login: usersTable.login }).from(usersTable).where(eq(usersTable.id, viewer.id)).limit(1);
+  if (!account || !(await verifyPassword(current, account.hash))) {
+    res.status(400).json({ error: "The current password is wrong." });
+    return;
+  }
+  if (next.toLowerCase() === account.login.toLowerCase()) {
+    res.status(400).json({ error: "The password must not equal the login." });
+    return;
+  }
+  await db.update(usersTable).set({ passwordHash: await hashAccountPassword(next), mustChangePassword: false, updatedAt: new Date() }).where(eq(usersTable.id, viewer.id));
+  res.json({ changed: true });
 });
 
 export default router;

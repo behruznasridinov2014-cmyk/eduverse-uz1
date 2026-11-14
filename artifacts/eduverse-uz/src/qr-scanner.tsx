@@ -1,3 +1,4 @@
+import { createPortal } from 'react-dom';
 import { useEffect, useRef, useState } from 'react';
 import { Camera, ScanLine, X } from 'lucide-react';
 import type { AppLanguage } from './localization';
@@ -174,8 +175,20 @@ export function QrScannerButton({
   className?: string;
 }) {
   const [scannerOpen, setScannerOpen] = useState(false);
+  useEffect(() => {
+    if (!scannerOpen) return;
+    // The page behind the scanner must not scroll or zoom.
+    const html = document.documentElement;
+    const previous = html.style.overflow;
+    html.style.overflow = 'hidden';
+    return () => {
+      html.style.overflow = previous;
+    };
+  }, [scannerOpen]);
   if (scannerOpen) {
-    return (
+    // Rendered on <body>: a parent with a transform, filter or blur would
+    // otherwise become the frame of the fixed dialog and break the layout.
+    return createPortal(
       <>
         <QrScanner
           language={language}
@@ -186,7 +199,8 @@ export function QrScannerButton({
           }}
         />
         <div className="qr-scanner-backdrop" onClick={() => setScannerOpen(false)} />
-      </>
+      </>,
+      document.body,
     );
   }
   return (

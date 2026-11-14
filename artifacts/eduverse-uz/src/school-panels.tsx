@@ -56,7 +56,7 @@ import {
   type Language,
   type SchoolData,
 } from './school-data';
-import { PhotoPicker, SignaturePad, SignatureStamp, SubmissionPhotos } from './homework';
+import { HomeworkAiCheck, PhotoPicker, SignaturePad, SignatureStamp, SubmissionPhotos } from './homework';
 
 const ASSIGNMENT_STATUSES = [
   'assigned',
@@ -887,6 +887,7 @@ export function ServerTeachingPanel({
                       <p className="muted school-assignment-copy">
                         <b>{t(language, 'In their words', 'Своими словами', 'O‘z so‘zlari bilan')}:</b> {submission.content}
                       </p>
+                      <HomeworkAiCheck assignmentId={reviewAssignment.id} studentId={submission.studentId} language={language} />
                       <div className="grid grid-2" style={{ gap: 8 }}>
                         <div className="control">
                           <label htmlFor={`review-status-${submission.studentId}`}>{t(language, 'Status', 'Статус', 'Holat')}</label>

@@ -33,7 +33,6 @@ import {
   Timer,
   Users,
 } from 'lucide-react';
-import { Interactive3d } from './interactive-3d';
 import type { Language } from './school-data';
 import { friendlyError } from './errors';
 import { AiTutor } from './extras';
@@ -487,7 +486,7 @@ function TopicDetail({
 
       <SlidesPanel topic={topic} copy={copy} />
       <FactsPanel topic={topic} copy={copy} />
-      <AiTutor language={language} topicId={topic.id} />
+      {!canCreate && <AiTutor language={language} topicId={topic.id} />}
       <Models3dPanel topic={topic} copy={copy} />
       <section className="panel reveal-up">
         <div className="section-head">
@@ -496,7 +495,6 @@ function TopicDetail({
             <p className="muted">{topic.visual3d.label}</p>
           </div>
         </div>
-        <Interactive3d scene={topic.visual3d} language={language} />
       </section>
       <QuizPanel topic={topic} copy={copy} onOpenRoom={onOpenRoom} canCreate={canCreate} />
     </>

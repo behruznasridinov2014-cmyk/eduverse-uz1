@@ -12,8 +12,8 @@ const t = (language: Language, uz: string, ru: string, en: string) =>
 /* -------------------------------------------------------------------------- */
 
 type Role = 'student' | 'teacher' | 'parent';
-type Row = { role: Role; name: string; className?: string; childName?: string };
-type Credential = { role: Role; name: string; className: string; login: string; password: string };
+type Row = { role: Role; name: string; className?: string; childName?: string; phone?: string };
+type Credential = { role: Role; name: string; className: string; login: string; password: string; phone?: string };
 
 function roleOf(value: string): Role | null {
   const v = value.trim().toLowerCase();
@@ -24,6 +24,18 @@ function roleOf(value: string): Role | null {
 }
 
 /** Rows copied from Excel/Google Sheets are tab separated; CSV also works. */
+const PHONE = /^\+?[\d\s()\-]{9,18}$/;
+const isPhone = (value: string) => PHONE.test(value.trim()) && value.replace(/\D/g, '').length >= 9;
+const isClass = (value: string) => /^\d{1,2}\s*[-–]?\s*[A-Za-zА-Яа-яЁёЎўҚқҒғҲҳ]?$/.test(value.trim());
+
+/**
+ * Two formats are accepted (copied from Excel / Google Sheets, or CSV):
+ *  1) the simplest one — one row per student:
+ *       ФИО ученика · Класс · Телефон родителя · ФИО родителя (optional)
+ *     the parent account is created and linked automatically;
+ *  2) with a role in the first column: ученик / учитель / родитель.
+ * Header rows are skipped.
+ */
 export function parseTable(text: string): { rows: Row[]; errors: number[] } {
   const rows: Row[] = [];
   const errors: number[] = [];
@@ -31,26 +43,36 @@ export function parseTable(text: string): { rows: Row[]; errors: number[] } {
     if (!line.trim()) return;
     const cells = (line.includes('\t') ? line.split('\t') : line.split(/[;,]/)).map((cell) => cell.trim());
     const role = roleOf(cells[0] ?? '');
-    if (!role) {
-      // a header row is skipped silently
-      if (index > 0) errors.push(index + 1);
+    const phone = cells.find((cell) => isPhone(cell));
+    if (role) {
+      const name = cells[1] ?? '';
+      if (!name) { errors.push(index + 1); return; }
+      const rest = cells.slice(2).filter((cell) => cell && cell !== phone);
+      const className = rest.find((cell) => isClass(cell));
+      const childName = role === 'parent' ? rest.find((cell) => cell !== className) : undefined;
+      rows.push({ role, name, className, childName, phone });
       return;
     }
-    const name = cells[1] ?? '';
-    if (!name) {
-      errors.push(index + 1);
+    // format 1: student row
+    const name = cells[0] ?? '';
+    const className = cells.slice(1).find((cell) => isClass(cell));
+    if (!name || !className || /^(фио|ф\.и\.о|f\.i\.sh|ism|name|ученик)/i.test(name)) {
+      if (index > 0 && name && !/^(фио|ф\.и\.о|ism|name)/i.test(name)) errors.push(index + 1);
       return;
     }
-    rows.push({ role, name, className: cells[2] || undefined, childName: role === 'parent' ? cells[3] || cells[2] || undefined : undefined });
+    rows.push({ role: 'student', name, className });
+    if (phone) {
+      const parentName = cells.slice(1).find((cell) => cell && cell !== className && cell !== phone && !isPhone(cell)) || `${name} — ota-ona / родитель`;
+      rows.push({ role: 'parent', name: parentName, childName: name, phone });
+    }
   });
   return { rows, errors };
 }
 
-const SAMPLE = `Роль\tФИО\tКласс\tРебёнок
-ученик\tАзиз Каримов\t7-А
-ученик\tМалика Юсупова\t7-А
-учитель\tНодира Рахимова\t7-А
-родитель\tКарим Каримов\t\tАзиз Каримов`;
+const SAMPLE = `ФИО ученика\tКласс\tТелефон родителя\tФИО родителя
+Азиз Каримов\t7-А\t+998 90 123 45 67\tКарим Каримов
+Малика Юсупова\t7-А\t+998 93 765 43 21\tДилноза Юсупова
+учитель\tНодира Рахимова\t7-А`;
 
 export function SchoolImport({ schoolId, language }: { schoolId: string; language: Language }) {
   const [text, setText] = useState('');
@@ -98,8 +120,8 @@ export function SchoolImport({ schoolId, language }: { schoolId: string; languag
   }
 
   function downloadCsv() {
-    const header = 'role;name;class;login;password';
-    const body = result.map((row) => [row.role, row.name, row.className, row.login, row.password].map((cell) => `"${cell.replace(/"/g, '""')}"`).join(';')).join('\n');
+    const header = 'role;name;class;login;password;phone';
+    const body = result.map((row) => [row.role, row.name, row.className, row.login, row.password, row.phone ?? ''].map((cell) => `"${cell.replace(/"/g, '""')}"`).join(';')).join('\n');
     const blob = new Blob(['﻿' + header + '\n' + body], { type: 'text/csv;charset=utf-8' });
     const link = document.createElement('a');
     link.href = URL.createObjectURL(blob);
@@ -117,9 +139,9 @@ export function SchoolImport({ schoolId, language }: { schoolId: string; languag
         <button type="button" className="btn small" onClick={() => setText(SAMPLE)}><ClipboardList size={14} /> {t(language, 'Namuna', 'Пример', 'Sample')}</button>
       </div>
       <p className="muted">{t(language,
-        'Excel jadvalidan ustunlarni nusxalab qo‘ying: Rol · F.I.Sh. · Sinf · Farzand (ota-ona uchun). Loginlar va parollar avtomatik yaratiladi.',
-        'Скопируйте из Excel столбцы и вставьте сюда: Роль · ФИО · Класс · Ребёнок (для родителя). Логины и пароли создадутся сами.',
-        'Copy columns from Excel and paste here: Role · Full name · Class · Child (for parents). Logins and passwords are generated.')}</p>
+        'Eng oddiy: har bir qator — bitta o‘quvchi: F.I.Sh · Sinf · Ota-ona telefoni · Ota-ona F.I.Sh. Ota-ona hisobi ham avtomatik yaratiladi. O‘qituvchi uchun birinchi ustunga «учитель» yozing.',
+        'Проще всего: одна строка — один ученик: ФИО · Класс · Телефон родителя · ФИО родителя. Аккаунт родителя создастся и привяжется сам. Для учителя напишите в первом столбце «учитель».',
+        'Simplest: one row per student: Full name · Class · Parent phone · Parent name. The parent account is created and linked automatically. For a teacher put “teacher” in the first column.')}</p>
       <textarea className="import-area" value={text} onChange={(event) => setText(event.target.value)} rows={8} placeholder={SAMPLE} spellCheck={false} />
       {parsed.rows.length > 0 && (
         <div className="import-summary">
@@ -152,6 +174,7 @@ export function SchoolImport({ schoolId, language }: { schoolId: string; languag
                 <b>{row.name}</b>
                 <span>{t(language, 'Login', 'Логин', 'Login')}: <code>{row.login}</code></span>
                 <span>{t(language, 'Parol', 'Пароль', 'Password')}: <code>{row.password}</code></span>
+                {row.phone ? <span>{t(language, 'Telefon', 'Телефон', 'Phone')}: {row.phone}</span> : null}
                 <small>{window.location.host}</small>
               </div>
             ))}
@@ -287,4 +310,65 @@ export function LessonPlanner({ language }: { language: Language }) {
       )}
     </section>
   );
+}
+
+/* -------------------------------------------------------------------------- */
+/* Password change (name and login are set by the school)                      */
+/* -------------------------------------------------------------------------- */
+
+export function PasswordChange({ language, mustChange = false }: { language: Language; mustChange?: boolean }) {
+  const [current, setCurrent] = useState('');
+  const [next, setNext] = useState('');
+  const [repeat, setRepeat] = useState('');
+  const [message, setMessage] = useState('');
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  async function submit(event: React.FormEvent) {
+    event.preventDefault();
+    setError('');
+    setMessage('');
+    if (next !== repeat) { setError(t(language, 'Parollar mos emas.', 'Пароли не совпадают.', 'Passwords do not match.')); return; }
+    setBusy(true);
+    try {
+      await customFetch('/api/me/password', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ current, next }) });
+      setMessage(t(language, 'Parol o‘zgartirildi.', 'Пароль изменён.', 'Password changed.'));
+      window.dispatchEvent(new Event('eduverse:password-changed'));
+      setCurrent(''); setNext(''); setRepeat('');
+    } catch (requestError) {
+      setError(friendlyError(requestError, language));
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <section className={`panel ${mustChange ? 'must-change' : ''}`}>
+      <h2>{t(language, 'Parolni o‘zgartirish', 'Сменить пароль', 'Change password')}</h2>
+      <p className="muted">{mustChange
+        ? t(language, 'Maktab bergan vaqtinchalik parolni o‘zingizning parolingizga almashtiring.', 'Замените временный пароль от школы на свой.', 'Replace the temporary password from the school with your own.')
+        : t(language, 'Ism va login maktab tomonidan belgilanadi, parolni o‘zingiz o‘zgartirasiz.', 'Имя и логин задаёт школа, пароль вы меняете сами.', 'The school sets your name and login; you change the password.')}</p>
+      <form className="password-form" onSubmit={submit}>
+        <input className="input" type="password" autoComplete="current-password" value={current} onChange={(event) => setCurrent(event.target.value)} placeholder={t(language, 'Hozirgi parol', 'Текущий пароль', 'Current password')} required />
+        <input className="input" type="password" autoComplete="new-password" minLength={8} value={next} onChange={(event) => setNext(event.target.value)} placeholder={t(language, 'Yangi parol (8+ belgi)', 'Новый пароль (от 8 символов)', 'New password (8+ chars)')} required />
+        <input className="input" type="password" autoComplete="new-password" minLength={8} value={repeat} onChange={(event) => setRepeat(event.target.value)} placeholder={t(language, 'Yangi parolni takrorlang', 'Повторите новый пароль', 'Repeat new password')} required />
+        <button type="submit" className="btn primary" disabled={busy}>{t(language, 'Saqlash', 'Сохранить', 'Save')}</button>
+      </form>
+      {message && <div className="notice success">{message}</div>}
+      {error && <div className="notice" role="alert">{error}</div>}
+    </section>
+  );
+}
+
+export function useMustChangePassword(userId: string | null = 'self'): boolean {
+  const [must, setMust] = useState(false);
+  useEffect(() => {
+    if (!userId) { setMust(false); return; }
+    let active = true;
+    void customFetch<{ mustChangePassword: boolean }>('/api/me/security', { method: 'GET' })
+      .then((response) => { if (active) setMust(response.mustChangePassword); })
+      .catch(() => {});
+    const onChanged = () => setMust(false);
+    window.addEventListener('eduverse:password-changed', onChanged);
+    return () => { active = false; window.removeEventListener('eduverse:password-changed', onChanged); };
+  }, [userId]);
+  return must;
 }

@@ -42527,6 +42527,10 @@ var init_auth = __esm({
         loginNormalized: text("login_normalized").notNull(),
         passwordHash: text("password_hash").notNull(),
         role: accountRoleEnum("role").notNull().default("student"),
+        /** Contact phone (parents), set by the school on import. */
+        phone: text("phone"),
+        /** True for accounts created by the school: the first sign-in asks to change the password. */
+        mustChangePassword: boolean("must_change_password").notNull().default(false),
         /** AES-256-GCM encrypted TOTP secret (base32 outside crypto layer). */
         twoFactorSecret: text("two_factor_secret"),
         /** Telegram chat id that is allowed to receive 2FA codes. */
@@ -42855,6 +42859,8 @@ var init_learning = __esm({
         hostId: uuid("host_id").notNull().references(() => usersTable.id, { onDelete: "cascade" }),
         subject: text("subject").notNull().default(""),
         title: text("title").notNull().default(""),
+        // Topic from the class textbook (course-data key) shown in the lesson.
+        courseKey: text("course_key"),
         status: lessonRoomStatusEnum("status").notNull().default("open"),
         startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
         endedAt: timestamp("ended_at", { withTimezone: true }),
@@ -43153,6 +43159,7 @@ var init_src = __esm({
 var ai_content_exports = {};
 __export(ai_content_exports, {
   SUPPORTED_SUBJECTS: () => SUPPORTED_SUBJECTS,
+  analyzeHomework: () => analyzeHomework,
   answerTutorQuestion: () => answerTutorQuestion,
   fetchWikipediaFact: () => fetchWikipediaFact,
   generateLessonPlan: () => generateLessonPlan,
@@ -43614,6 +43621,39 @@ async function generateLessonPlan(input) {
     homework: str(parsed.homework),
     experiment: str(parsed.experiment),
     source: "ai"
+  };
+}
+async function analyzeHomework(input) {
+  if (!isAiConfigured()) return null;
+  const content = [
+    {
+      type: "text",
+      text: `\u041F\u0440\u0435\u0434\u043C\u0435\u0442: ${input.subject}. \u0417\u0430\u0434\u0430\u043D\u0438\u0435: ${input.task}. \u0423\u0447\u0435\u043D\u0438\u043A 7 \u043A\u043B\u0430\u0441\u0441\u0430: ${input.studentName}.
+\u041E\u0431\u044A\u044F\u0441\u043D\u0435\u043D\u0438\u0435 \u0443\u0447\u0435\u043D\u0438\u043A\u0430 \u0441\u0432\u043E\u0438\u043C\u0438 \u0441\u043B\u043E\u0432\u0430\u043C\u0438: \xAB${input.explanation.slice(0, 1500)}\xBB.
+\u0424\u043E\u0442\u043E \u0442\u0435\u0442\u0440\u0430\u0434\u0438 \u043F\u0440\u0438\u043A\u0440\u0435\u043F\u043B\u0435\u043D\u044B (${input.photos.length}).`
+    },
+    ...input.photos.slice(0, 2).map((url) => ({ type: "image_url", image_url: { url } }))
+  ];
+  const raw = await callModel([
+    {
+      role: "system",
+      content: '\u0422\u044B \u043F\u043E\u043C\u043E\u0449\u043D\u0438\u043A \u0443\u0447\u0438\u0442\u0435\u043B\u044F. \u041E\u0446\u0435\u043D\u0438, \u043F\u043E\u0445\u043E\u0436\u0435 \u043B\u0438, \u0447\u0442\u043E \u0443\u0447\u0435\u043D\u0438\u043A \u0441\u0434\u0435\u043B\u0430\u043B \u0440\u0430\u0431\u043E\u0442\u0443 \u0441\u0430\u043C. \u041F\u0440\u0438\u0437\u043D\u0430\u043A\u0438 \u0441\u0430\u043C\u043E\u0441\u0442\u043E\u044F\u0442\u0435\u043B\u044C\u043D\u043E\u0439 \u0440\u0430\u0431\u043E\u0442\u044B: \u0440\u0435\u0448\u0435\u043D\u0438\u0435 \u043D\u0430\u043F\u0438\u0441\u0430\u043D\u043E \u043E\u0442 \u0440\u0443\u043A\u0438 \u0432 \u0442\u0435\u0442\u0440\u0430\u0434\u0438, \u0435\u0441\u0442\u044C \u0438\u0441\u043F\u0440\u0430\u0432\u043B\u0435\u043D\u0438\u044F \u0438 \u0447\u0435\u0440\u043D\u043E\u0432\u044B\u0435 \u0448\u0430\u0433\u0438, \u043E\u0431\u044A\u044F\u0441\u043D\u0435\u043D\u0438\u0435 \u043F\u0440\u043E\u0441\u0442\u044B\u043C \u0434\u0435\u0442\u0441\u043A\u0438\u043C \u044F\u0437\u044B\u043A\u043E\u043C, \u0441\u043E\u0432\u043F\u0430\u0434\u0430\u0435\u0442 \u0441 \u0440\u0435\u0448\u0435\u043D\u0438\u0435\u043C \u043D\u0430 \u0444\u043E\u0442\u043E. \u041F\u0440\u0438\u0437\u043D\u0430\u043A\u0438 \u043E\u0442\u0432\u0435\u0442\u0430 \u0418\u0418: \u0438\u0434\u0435\u0430\u043B\u044C\u043D\u044B\u0439 \xAB\u0432\u0437\u0440\u043E\u0441\u043B\u044B\u0439\xBB \u0442\u0435\u043A\u0441\u0442 \u0441 \u0442\u0435\u0440\u043C\u0438\u043D\u0430\u043C\u0438 \u043D\u0435 \u043F\u043E \u0432\u043E\u0437\u0440\u0430\u0441\u0442\u0443, \u0448\u0430\u0431\u043B\u043E\u043D\u043D\u044B\u0435 \u0444\u0440\u0430\u0437\u044B, \u043E\u0431\u044A\u044F\u0441\u043D\u0435\u043D\u0438\u0435 \u043D\u0435 \u0441\u043E\u0432\u043F\u0430\u0434\u0430\u0435\u0442 \u0441 \u0442\u0435\u0442\u0440\u0430\u0434\u044C\u044E, \u043D\u0430 \u0444\u043E\u0442\u043E \u043D\u0430\u043F\u0435\u0447\u0430\u0442\u0430\u043D\u043D\u044B\u0439 \u0442\u0435\u043A\u0441\u0442 \u0438\u043B\u0438 \u044D\u043A\u0440\u0430\u043D. \u042D\u0442\u043E \u0442\u043E\u043B\u044C\u043A\u043E \u043F\u043E\u0434\u0441\u043A\u0430\u0437\u043A\u0430 \u0443\u0447\u0438\u0442\u0435\u043B\u044E, \u043D\u0435 \u043E\u0431\u0432\u0438\u043D\u0435\u043D\u0438\u0435. \u041E\u0442\u0432\u0435\u0447\u0430\u0439 \u0441\u0442\u0440\u043E\u0433\u043E JSON: {"verdict":"self|unclear|ai","confidence":0-100,"handwritten":true|false,"matchesTask":true|false,"reasons":["...","..."],"advice":"\u0447\u0442\u043E \u0441\u043F\u0440\u043E\u0441\u0438\u0442\u044C \u0443 \u0443\u0447\u0435\u043D\u0438\u043A\u0430"}. \u041F\u0438\u0448\u0438 \u043F\u043E-\u0440\u0443\u0441\u0441\u043A\u0438 \u043A\u0440\u0430\u0442\u043A\u043E.'
+    },
+    { role: "user", content }
+  ]);
+  if (!raw) return null;
+  const parsed = safeJsonObject(raw);
+  if (!parsed) return null;
+  const verdict = parsed.verdict === "self" || parsed.verdict === "ai" ? parsed.verdict : "unclear";
+  const confidence = Math.max(0, Math.min(100, Math.round(Number(parsed.confidence) || 50)));
+  return {
+    verdict,
+    // never claim certainty: an AI detector cannot prove authorship
+    confidence: Math.min(confidence, 90),
+    handwritten: parsed.handwritten === true,
+    matchesTask: parsed.matchesTask !== false,
+    reasons: Array.isArray(parsed.reasons) ? parsed.reasons.map((item) => str(item)).filter(Boolean).slice(0, 4) : [],
+    advice: str(parsed.advice)
   };
 }
 async function generateTopicTest(subject, grade, title, count = 5) {
@@ -50423,6 +50463,10 @@ function isUniqueConstraintViolation2(error) {
 // src/routes/learning.ts
 init_ai_content();
 var router3 = (0, import_express3.Router)();
+var perSession = (req) => {
+  const token = req.cookies?.["eduverse.sid"];
+  return typeof token === "string" && token ? `sid:${token.slice(0, 64)}` : `ip:${req.ip ?? "unknown"}`;
+};
 var ATTENDANCE_STATUSES = ["present", "absent", "late", "excused"];
 function user(res) {
   return res.locals.authenticatedUser;
@@ -51285,7 +51329,7 @@ router3.get("/classes/:classId/journal", requireAuthenticatedRole(...staffRoles)
   });
   res.json({ assignments, rows });
 });
-var tutorLimiter = createRateLimiter(30, 10 * 60 * 1e3, "Too many AI questions. Wait a few minutes.", "ai-tutor");
+var tutorLimiter = createRateLimiter(30, 10 * 60 * 1e3, "Too many AI questions. Wait a few minutes.", "ai-tutor", perSession);
 router3.post("/ai/tutor", requireAuthenticatedRole(...everyRole), tutorLimiter, async (req, res) => {
   const question = readString(req.body, "question", 500);
   if (!question) {
@@ -51859,6 +51903,20 @@ router4.post(
   }
 );
 router4.post(
+  "/rooms/end-all",
+  requireAuthenticatedRole("teacher", "school_director", "school_admin", "education_admin", "ministry_admin", "platform_superadmin"),
+  async (_req, res) => {
+    const viewer = user2(res);
+    const open = await db.select({ id: lessonRoomsTable.id }).from(lessonRoomsTable).where(and(eq(lessonRoomsTable.hostId, viewer.id), ne(lessonRoomsTable.status, "ended")));
+    for (const row of open) {
+      await db.update(lessonRoomsTable).set({ status: "ended", endedAt: /* @__PURE__ */ new Date() }).where(eq(lessonRoomsTable.id, row.id));
+      await appendSignal(row.id, { from: viewer.id, to: "all", kind: "control", payload: { event: "ended" } });
+      await dropSignals(row.id);
+    }
+    res.json({ ended: open.length });
+  }
+);
+router4.post(
   "/rooms/:roomId/leave",
   requireAuthenticatedRole("student", "teacher", "school_director", "school_admin", "education_admin", "ministry_admin", "platform_superadmin"),
   async (req, res) => {
@@ -51938,11 +51996,11 @@ router4.get(
       return;
     }
     if (!room.topicId) {
-      res.json({ topic: null });
+      res.json({ topic: null, courseKey: room.courseKey ?? null });
       return;
     }
     const [topic] = await db.select().from(lessonTopicsTable).where(eq(lessonTopicsTable.id, room.topicId)).limit(1);
-    res.json({ topic: topic ?? null });
+    res.json({ topic: topic ?? null, courseKey: room.courseKey ?? null });
   }
 );
 router4.put(
@@ -51957,6 +52015,18 @@ router4.put(
     }
     if (room.hostId !== viewer.id && !await canManage2(viewer.id, viewer.role, room.classId)) {
       res.status(403).json({ error: "Only the host can change the lesson topic." });
+      return;
+    }
+    const courseKeyRaw = readString2(req.body, "courseKey", 40);
+    if (courseKeyRaw !== void 0) {
+      if (!/^[a-z0-9][a-z0-9.\-]{1,39}$/.test(courseKeyRaw)) {
+        res.status(400).json({ error: "Invalid course topic." });
+        return;
+      }
+      const courseTitle = readString2(req.body, "title", 180) ?? "";
+      await db.update(lessonRoomsTable).set({ courseKey: courseKeyRaw, topicId: null, ...courseTitle ? { title: courseTitle } : {} }).where(eq(lessonRoomsTable.id, room.id));
+      await appendSignal(room.id, { from: viewer.id, to: "all", kind: "control", payload: { event: "topic", courseKey: courseKeyRaw } });
+      res.json({ topic: null, courseKey: courseKeyRaw });
       return;
     }
     const topicId = readString2(req.body, "topicId", 64) ?? null;
@@ -51975,6 +52045,7 @@ router4.put(
     }
     await db.update(lessonRoomsTable).set({
       topicId,
+      courseKey: null,
       ...topic ? { subject: topic.subject, title: topic.title } : {}
     }).where(eq(lessonRoomsTable.id, room.id));
     await appendSignal(room.id, { from: viewer.id, to: "all", kind: "control", payload: { event: "topic", topicId } });
@@ -53225,6 +53296,46 @@ router5.post(
     res.status(201).json({ submission });
   }
 );
+router5.post(
+  "/assignments/:assignmentId/submissions/:studentId/ai-check",
+  requireAuthenticatedRole(...ACCOUNT_ROLES),
+  async (req, res) => {
+    if (!requireUuidParams(res, "assignmentId", "studentId")) return;
+    const assignmentId = String(req.params.assignmentId);
+    const studentId = String(req.params.studentId);
+    const user3 = currentUser(res);
+    const context = await authorizeAssignment(user3, assignmentId);
+    if (!context) {
+      res.status(404).json({ error: "Assignment not found." });
+      return;
+    }
+    if (!context.authorization.canReview) {
+      forbidden(res, "Only the teacher can run this check.");
+      return;
+    }
+    const [submission] = await db.select({ id: assignmentSubmissionsTable.id, content: assignmentSubmissionsTable.content }).from(assignmentSubmissionsTable).where(and(eq(assignmentSubmissionsTable.assignmentId, assignmentId), eq(assignmentSubmissionsTable.studentId, studentId))).limit(1);
+    if (!submission) {
+      res.status(404).json({ error: "Submission not found." });
+      return;
+    }
+    const [info] = await db.select({ title: assignmentsTable.title, subject: assignmentsTable.subject, description: assignmentsTable.description }).from(assignmentsTable).where(eq(assignmentsTable.id, assignmentId)).limit(1);
+    const [student] = await db.select({ name: usersTable.username }).from(usersTable).where(eq(usersTable.id, studentId)).limit(1);
+    const photos = await db.select({ data: submissionFilesTable.data }).from(submissionFilesTable).where(eq(submissionFilesTable.submissionId, submission.id)).orderBy(submissionFilesTable.position).limit(2);
+    const { analyzeHomework: analyzeHomework2 } = await Promise.resolve().then(() => (init_ai_content(), ai_content_exports));
+    const check = await analyzeHomework2({
+      subject: info?.subject ?? "",
+      task: `${info?.title ?? ""}. ${info?.description ?? ""}`.slice(0, 600),
+      studentName: student?.name ?? "",
+      explanation: submission.content,
+      photos: photos.map((row) => row.data).filter((data) => data.startsWith("data:image/"))
+    });
+    if (!check) {
+      res.status(503).json({ error: "The AI check is not available right now." });
+      return;
+    }
+    res.json({ check });
+  }
+);
 router5.get(
   "/assignments/:assignmentId/submissions/:studentId/files",
   requireAuthenticatedRole(...ACCOUNT_ROLES),
@@ -53395,6 +53506,10 @@ init_src();
 import { randomBytes as randomBytes6, scrypt as scryptCallback3 } from "node:crypto";
 init_ai_content();
 var router6 = (0, import_express6.Router)();
+var perSession2 = (req) => {
+  const token = req.cookies?.["eduverse.sid"];
+  return typeof token === "string" && token ? `sid:${token.slice(0, 64)}` : `ip:${req.ip ?? "unknown"}`;
+};
 var viewerOf = (res) => res.locals.authenticatedUser;
 var isRecord5 = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
 var SCRYPT_CONFIG2 = { N: 1 << 15, r: 8, p: 1, maxmem: 64 * 1024 * 1024 };
@@ -53463,6 +53578,13 @@ async function canManageSchool2(viewer, schoolId) {
   const [row] = await db.select({ role: schoolMembersTable.role }).from(schoolMembersTable).where(and(eq(schoolMembersTable.schoolId, schoolId), eq(schoolMembersTable.userId, viewer.id))).limit(1);
   return row?.role === "school_director" || row?.role === "school_admin";
 }
+function normalizePhone(value) {
+  if (typeof value !== "string") return void 0;
+  const digits = value.replace(/\D/g, "");
+  if (digits.length === 9) return `+998${digits}`;
+  if (digits.length === 12 && digits.startsWith("998")) return `+${digits}`;
+  return void 0;
+}
 function readRows(body) {
   const raw = isRecord5(body) && Array.isArray(body.rows) ? body.rows : [];
   const rows = [];
@@ -53475,7 +53597,8 @@ function readRows(body) {
       role,
       name,
       className: cleanText(item.className, 40) ?? void 0,
-      childName: cleanText(item.childName, 80) ?? void 0
+      childName: cleanText(item.childName, 80) ?? void 0,
+      phone: normalizePhone(item.phone)
     });
   }
   return rows;
@@ -53538,7 +53661,9 @@ router6.post(
             login,
             loginNormalized: login.toLowerCase(),
             passwordHash,
-            role: row.role
+            role: row.role,
+            phone: row.phone ?? null,
+            mustChangePassword: true
           }).returning({ id: usersTable.id, username: usersTable.username, login: usersTable.login });
           account = inserted ?? null;
         } catch (error) {
@@ -53565,7 +53690,7 @@ router6.post(
         if (childId) await db.insert(parentLinksTable).values({ parentId: account.id, studentId: childId, createdBy: viewer.id }).onConflictDoNothing();
         else skipped.push({ name: row.name, reason: "child-not-found" });
       }
-      created.push({ role: row.role, name: account.username, className: row.className ?? "", login: account.login, password });
+      created.push({ role: row.role, name: account.username, className: row.className ?? "", login: account.login, password, phone: row.phone ?? "" });
     }
     res.status(201).json({ created, skipped });
   }
@@ -53619,7 +53744,7 @@ router6.post("/auth/2fa/telegram/webhook", async (req, res, next) => {
   }
   res.json({ ok: true });
 });
-var planLimiter = createRateLimiter(20, 10 * 60 * 1e3, "Too many lesson plans. Wait a few minutes.", "ai-plan");
+var planLimiter = createRateLimiter(20, 10 * 60 * 1e3, "Too many lesson plans. Wait a few minutes.", "ai-plan", perSession2);
 router6.post(
   "/ai/lesson-plan",
   requireAuthenticatedRole("teacher", "school_director", "school_admin", "education_admin", "ministry_admin", "platform_superadmin"),
@@ -53696,6 +53821,32 @@ router6.get("/labs/reports", requireAuthenticatedRole("student", "teacher", "sch
   }
   const reports = await db.select({ id: labReportsTable.id, lab: labReportsTable.lab, result: labReportsTable.result, errorPercent: labReportsTable.errorPercent, grade: labReportsTable.grade, data: labReportsTable.data, createdAt: labReportsTable.createdAt, studentName: usersTable.username }).from(labReportsTable).innerJoin(usersTable, eq(labReportsTable.studentId, usersTable.id)).where(inArray(labReportsTable.studentId, studentIds)).orderBy(desc(labReportsTable.createdAt)).limit(100);
   res.json({ reports });
+});
+var passwordLimiter = createRateLimiter(10, 15 * 60 * 1e3, "Too many attempts. Try again later.", "password-change", perSession2);
+router6.get("/me/security", requireAuthenticatedRole(...everyRole2), async (_req, res) => {
+  const viewer = viewerOf(res);
+  const [row] = await db.select({ must: usersTable.mustChangePassword }).from(usersTable).where(eq(usersTable.id, viewer.id)).limit(1);
+  res.json({ mustChangePassword: Boolean(row?.must) });
+});
+router6.post("/me/password", requireAuthenticatedRole(...everyRole2), passwordLimiter, async (req, res) => {
+  const viewer = viewerOf(res);
+  const current = isRecord5(req.body) && typeof req.body.current === "string" ? req.body.current : "";
+  const next = isRecord5(req.body) && typeof req.body.next === "string" ? req.body.next : "";
+  if (next.length < 8 || next.length > 128) {
+    res.status(400).json({ error: "The new password must be 8 to 128 characters." });
+    return;
+  }
+  const [account] = await db.select({ hash: usersTable.passwordHash, login: usersTable.login }).from(usersTable).where(eq(usersTable.id, viewer.id)).limit(1);
+  if (!account || !await verifyPassword(current, account.hash)) {
+    res.status(400).json({ error: "The current password is wrong." });
+    return;
+  }
+  if (next.toLowerCase() === account.login.toLowerCase()) {
+    res.status(400).json({ error: "The password must not equal the login." });
+    return;
+  }
+  await db.update(usersTable).set({ passwordHash: await hashPassword(next), mustChangePassword: false, updatedAt: /* @__PURE__ */ new Date() }).where(eq(usersTable.id, viewer.id));
+  res.json({ changed: true });
 });
 var school_tools_default = router6;
 

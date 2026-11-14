@@ -11,8 +11,9 @@ import { PdfViewer } from "./pdf-viewer";
 import { AttendancePage } from './attendance-page';
 import { ChemLabPage } from './chem-lab';
 import { DirectorDashboard, ParentCabinet, ParentLinkForm } from './cabinets';
-import { LessonPlanner, SchoolImport, TelegramConnect } from './school-tools';
+import { LessonPlanner, SchoolImport, TelegramConnect, useMustChangePassword } from './school-tools';
 import { LabReports } from './lab-work';
+import { CoursePage } from './course';
 import { AnnouncementsPanel, AttendanceSummary, GradeJournal } from './extras';
 import type { User } from '@workspace/api-client-react';
 import { useSchoolData, type SchoolData } from './school-data';
@@ -67,6 +68,8 @@ function App(){
   const [notes,setNotes]=useSavedState<Record<string,string>>('notes',{});
   const [mobileOpen,setMobileOpen]=useState(false);
   const school=useSchoolData(auth.user,auth.status);
+  // Hooks stay above every early return (sign-in pages, loading states).
+  const mustChangePassword=useMustChangePassword(auth.user?.id??null);
   useEffect(()=>{
     const hasQrCode = typeof window!=='undefined' && new URLSearchParams(window.location.search).has('qr');
     if(hasLocalSession&&auth.user&&!hasQrCode&&(location==='/login'||location==='/register'))setLocation('/dashboard');
@@ -106,6 +109,7 @@ function App(){
     '/library':['student','teacher','parent'],
     '/read':['student','teacher','parent'],
     '/topics':['student','teacher'],
+    '/course':['student','teacher'],
     '/attendance':['teacher','school_director','school_admin'],
     '/teacher':['teacher'],
     '/parent':['parent'],
@@ -161,6 +165,7 @@ function App(){
         </div>
         <button type="button" className="btn small" onClick={auth.dismissAccountNotice} aria-label="Close"><X size={14}/></button>
       </div>}
+      {mustChangePassword&&location!=='/profile'&&<div className="account-banner password-banner" role="status"><ShieldCheck size={18}/><div><b>{lang==='Uzbek'?'Vaqtinchalik parolni almashtiring':lang==='Русский'?'Смените временный пароль':'Change your temporary password'}</b><span>{lang==='Uzbek'?'Bu sizning hisobingiz xavfsizligi uchun.':lang==='Русский'?'Это нужно для безопасности вашего аккаунта.':'This keeps your account safe.'}</span></div><button type="button" className="btn small primary" onClick={()=>navigate('/profile')}>{lang==='Uzbek'?'Almashtirish':lang==='Русский'?'Сменить':'Change'}</button></div>}
       <div className="content" key={`${location.split('/')[1]}:${auth.user?.id??''}`}>
         {forbidden&&auth.user?<RoleBlocked language={lang} role={auth.user.role} goHome={()=>navigate('/dashboard')}/>
         :location==='/profile'&&auth.user?<ProfilePage user={auth.user} language={lang} onSignedOut={()=>navigate('/')}/>
@@ -176,6 +181,7 @@ function App(){
         :location==='/lab'&&auth.user?<ChemLabPage language={lang} user={auth.user}/>
         :location.startsWith('/lesson')&&auth.user?<LessonRoomPage user={auth.user} language={lang} prefillTopicId={lessonTopicId}/>
         :location==='/classes'?<ClassesPage school={school} user={auth.user!} language={lang} onOpen={navigate}/>
+        :location==='/course'&&auth.user?<CoursePage user={auth.user} school={school} language={lang} onOpen={navigate}/>
         :location==='/topics'&&auth.user?<TopicLibraryPage user={auth.user} language={lang} onOpenRoom={topicId=>navigate('/lesson/'+topicId)}/>
         :location==='/attendance'&&auth.user?<AttendancePage user={auth.user} language={lang}/>
         :<NotFound language={lang} goHome={()=>navigate('/dashboard')}/>}
@@ -188,7 +194,7 @@ type NavItem={label:string;href:string;icon:typeof Home;tone:string};
 const NAV_ITEMS:NavItem[]=[
   {label:'Overview',href:'/dashboard',icon:LayoutDashboard,tone:'slate'},
   {label:'Lesson room',href:'/lesson',icon:MonitorPlay,tone:'blue'},
-  {label:'Topics & 3D',href:'/topics',icon:Atom,tone:'violet'},
+  {label:'Topics & 3D',href:'/course',icon:Atom,tone:'violet'},
   {label:'Attendance',href:'/attendance',icon:CalendarCheck2,tone:'green'},
   {label:'Teacher workspace',href:'/teacher',icon:NotebookPen,tone:'orange'},
   {label:'Homework',href:'/classes',icon:NotebookPen,tone:'orange'},
@@ -229,14 +235,14 @@ const L=(uz:string,ru:string,en:string):Record<Lang,string>=>({Uzbek:uz,Русс
 const HOME_ACTIONS:Record<User['role'],HomeAction[]>={
  student:[
   {label:L('Onlayn darsga kirish','Войти на урок','Join a lesson'),description:L('O‘qituvchi bergan kodni kiriting.','Введите код от учителя.','Enter the code from your teacher.'),path:'/lesson',icon:MonitorPlay,tone:'blue'},
-  {label:L('Dars mavzusi','Тема урока','Lesson topic'),description:L('3D modelni aylantiring, faktlar va test.','Крутите 3D-модель, факты и тест.','Rotate the 3D model, facts and a quiz.'),path:'/topics',icon:Atom,tone:'violet'},
+  {label:L('Dars mavzusi','Тема урока','Lesson topic'),description:L('3D modelni aylantiring, faktlar va test.','Крутите 3D-модель, факты и тест.','Rotate the 3D model, facts and a quiz.'),path:'/course',icon:Atom,tone:'violet'},
   {label:L('Uy vazifalari','Домашние задания','Homework'),description:L('Daftar rasmini yuboring va bahoni ko‘ring.','Отправьте фото тетради и смотрите оценку.','Send notebook photos and see your grade.'),path:'/classes',icon:NotebookPen,tone:'orange'},
   {label:L('3D studiya','3D-студия','3D studio'),description:L('Kimyo, fizika, matematika, biologiya, geografiya — hammasi 3D da.','Химия, физика, математика, биология, география — всё в 3D.','Chemistry, physics, maths, biology, geography — all in 3D.'),path:'/lab',icon:FlaskConical,tone:'pink'},
   {label:L('Darsliklar','Учебники','Textbooks'),description:L('7-sinf darsliklari va daftarlar.','Учебники и тетради 7 класса.','Grade 7 textbooks and workbooks.'),path:'/library',icon:BookMarked,tone:'teal'},
  ],
  teacher:[
   {label:L('Onlayn dars boshlash','Начать онлайн-урок','Start a lesson'),description:L('Kamera, ovoz, ekran, chat va testlar.','Камера, звук, экран, чат и тесты.','Camera, sound, screen, chat and tests.'),path:'/lesson',icon:MonitorPlay,tone:'blue'},
-  {label:L('Dars mavzusi','Тема урока','Lesson topic'),description:L('Fan va mavzuni yozing — slaydlar, 3D va test tayyor.','Напишите тему — слайды, 3D и тест готовы.','Type a topic — slides, 3D and a quiz are ready.'),path:'/topics',icon:Atom,tone:'violet'},
+  {label:L('Dars mavzusi','Тема урока','Lesson topic'),description:L('Fan va mavzuni yozing — slaydlar, 3D va test tayyor.','Напишите тему — слайды, 3D и тест готовы.','Type a topic — slides, 3D and a quiz are ready.'),path:'/course',icon:Atom,tone:'violet'},
   {label:L('Davomat','Давомат','Attendance'),description:L('Kim kelganini bir bosishda belgilang.','Отметьте присутствие в один клик.','Mark attendance in one click.'),path:'/attendance',icon:CalendarCheck2,tone:'green'},
   {label:L('Uy vazifasi berish','Выдать задание','Assign homework'),description:L('Topshiriq bering, daftar rasmlarini tekshiring.','Выдайте задание и проверьте фото тетрадей.','Assign work and check notebook photos.'),path:'/teacher',icon:NotebookPen,tone:'orange'},
   {label:L('3D studiya','3D-студия','3D studio'),description:L('Har qanday fanni sinfga 3D da ko‘rsating.','Показывайте классу любой предмет в 3D.','Show any subject to the class in 3D.'),path:'/lab',icon:FlaskConical,tone:'pink'},
@@ -415,12 +421,33 @@ function ClassesPage({school,user,language,onOpen}:{school:SchoolData;user:User;
    :<div className="notice"><Info/><span>{school.status==='loading'?text('Loading…','Загрузка…','Yuklanmoqda…'):school.status==='unavailable'?text('No connection. Try again in a minute.','Нет связи. Попробуйте через минуту.','Aloqa yo‘q. Bir daqiqadan so‘ng urinib ko‘ring.'):text('You are not in a class yet. Ask your teacher to add you.','Вас ещё не добавили в класс. Попросите учителя добавить вас.','Sizni hali sinfga qo‘shishmagan. O‘qituvchidan so‘rang.')}</span></div>}
  </>;
 }
+type TeacherTab='tasks'|'journal'|'plan'|'class'|'topics';
 function TeacherPage({school,user,language,goBoard,onOpen}:{school:SchoolData;user:User;language:Lang;goBoard:()=>void;onOpen:(path:string)=>void}){
  const text=(en:string,ru:string,uz:string)=>language==='Русский'?ru:language==='Uzbek'?uz:en;
- return <><PageHeading eyebrow={text('Teacher workspace','Кабинет учителя','O‘qituvchi kabineti')} title={text('Homework and classes','Задания и классы','Vazifalar va sinflar')} subtitle={text('Assign homework tied to a topic, check notebook photos, grade and sign.','Выдавайте задания по теме, проверяйте фото тетрадей, оценивайте и подписывайте.','Mavzuga bog‘langan vazifa bering, daftar rasmlarini tekshiring, baholang va imzo qo‘ying.')}><button className="btn" onClick={()=>onOpen('/topics')}><Sparkles/> {text('Lesson topic','Тема урока','Dars mavzusi')}</button><button className="btn" onClick={goBoard}><Presentation/> {text('Board','Доска','Doska')}</button></PageHeading>
-  {school.status==='ready'&&school.hasServerClasses
-   ?<div className="page-stack"><LessonPlanner language={language}/><GradeJournal school={school} language={language}/><LabReports language={language}/><ServerTeachingPanel school={school} language={language}/><ServerClassesPanel school={school} user={user} language={language} onOpen={onOpen}/><div className="grid grid-2"><ServerAccountsPanel school={school} language={language}/><ServerTopicAssignPanel school={school} language={language}/></div><ParentLinkForm language={language}/></div>
-   :<div className="notice"><Info/><span>{school.status==='loading'?text('Loading your classes…','Загружаем ваши классы…','Sinflaringiz yuklanmoqda…'):school.status==='unavailable'?text('No connection. Try again in a minute.','Нет связи. Попробуйте через минуту.','Aloqa yo‘q. Bir daqiqadan so‘ng urinib ko‘ring.'):text('No class is linked to your account yet. Ask your school administrator to add you to a class.','К вашему аккаунту ещё не привязан класс. Попросите администратора школы добавить вас в класс.','Hisobingizga hali sinf biriktirilmagan. Maktab administratoridan so‘rang.')}</span></div>}</>;
+ const [tab,setTab]=useSavedState<TeacherTab>('teacher-tab','tasks');
+ const tabs:Array<[TeacherTab,string,typeof Home]>=[
+  ['tasks',text('Homework','Задания','Vazifalar'),NotebookPen],
+  ['journal',text('Grades','Журнал','Jurnal'),ClipboardCheck],
+  ['plan',text('Lesson plan','План урока','Dars rejasi'),Sparkles],
+  ['class',text('My class','Мой класс','Sinfim'),Users],
+  ['topics',text('My AI topics','Свои темы','O‘z mavzularim'),Atom],
+ ];
+ const ready=school.status==='ready'&&school.hasServerClasses;
+ return <>
+  <PageHeading eyebrow={text('Teacher workspace','Кабинет учителя','O‘qituvchi kabineti')} title={tabs.find(([key])=>key===tab)?.[1]??''} subtitle={text('Everything for the class, step by step.','Всё для класса — по разделам.','Sinf uchun hammasi — bo‘limlarda.')}><button className="btn" onClick={goBoard}><PenTool/> {text('Board','Доска','Doska')}</button></PageHeading>
+  <div className="cabinet-tabs-bar" role="tablist">
+   {tabs.map(([key,label,Icon])=><button key={key} type="button" role="tab" aria-selected={tab===key} className={`cabinet-tab ${tab===key?'active':''}`} onClick={()=>setTab(key)}><Icon size={16}/>{label}</button>)}
+  </div>
+  {!ready&&tab!=='plan'&&tab!=='topics'
+   ?<div className="notice"><Info/><span>{school.status==='loading'?text('Loading your classes…','Загружаем ваши классы…','Sinflaringiz yuklanmoqda…'):school.status==='unavailable'?text('No connection. Try again in a minute.','Нет связи. Попробуйте через минуту.','Aloqa yo‘q. Bir daqiqadan so‘ng urinib ko‘ring.'):text('No class is linked to your account yet.','К вашему аккаунту ещё не привязан класс.','Hisobingizga hali sinf biriktirilmagan.')}</span></div>
+   :<div className="page-stack cabinet-pane" key={tab}>
+    {tab==='tasks'&&<ServerTeachingPanel school={school} language={language}/>}
+    {tab==='journal'&&<><GradeJournal school={school} language={language}/><LabReports language={language}/></>}
+    {tab==='plan'&&<LessonPlanner language={language}/>}
+    {tab==='class'&&<><ServerClassesPanel school={school} user={user} language={language} onOpen={onOpen}/><div className="grid grid-2"><ServerAccountsPanel school={school} language={language}/><ParentLinkForm language={language}/></div></>}
+    {tab==='topics'&&<><ServerTopicAssignPanel school={school} language={language}/><button className="btn" onClick={()=>onOpen('/topics')}><Sparkles size={15}/> {text('Create a topic with AI','Создать свою тему с ИИ','AI bilan mavzu yaratish')}</button></>}
+   </div>}
+ </>;
 }
 function ParentPage({language}:{language:Lang}){
  const text=(en:string,ru:string,uz:string)=>language==='Русский'?ru:language==='Uzbek'?uz:en;

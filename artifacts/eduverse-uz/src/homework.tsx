@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { getSubmissionFiles } from '@workspace/api-client-react';
+import { customFetch, getSubmissionFiles } from '@workspace/api-client-react';
 import { Camera, Eraser, ImagePlus, X } from 'lucide-react';
 import type { Language } from './school-data';
 
@@ -275,6 +275,58 @@ export function SignatureStamp({
         {tr(language, 'Signed by', 'Подписал(а)', 'Imzolagan')} <b>{signedBy ?? ''}</b>
         {signedAt ? ` · ${new Date(signedAt).toLocaleDateString()}` : ''}
       </span>
+    </div>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/* Teacher hint: did the student do the work themselves or copy an AI answer?  */
+/* -------------------------------------------------------------------------- */
+
+type AiCheck = { verdict: 'self' | 'unclear' | 'ai'; confidence: number; handwritten: boolean; matchesTask: boolean; reasons: string[]; advice: string };
+
+export function HomeworkAiCheck({ assignmentId, studentId, language }: { assignmentId: string; studentId: string; language: Language }) {
+  const [check, setCheck] = useState<AiCheck | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const tx = (uz: string, ru: string, en: string) => (language === 'Uzbek' ? uz : language === 'Русский' ? ru : en);
+  async function run() {
+    setBusy(true);
+    setError('');
+    try {
+      const response = await customFetch<{ check: AiCheck }>(`/api/assignments/${assignmentId}/submissions/${studentId}/ai-check`, { method: 'POST' });
+      setCheck(response.check);
+    } catch (requestError) {
+      const status = (requestError as { status?: number })?.status;
+      setError(status === 503
+        ? tx('AI hozir mavjud emas. Keyinroq urinib ko‘ring.', 'ИИ сейчас недоступен. Попробуйте позже.', 'AI is unavailable right now. Try later.')
+        : tx('Tekshirib bo‘lmadi.', 'Не удалось проверить.', 'Could not check.'));
+    } finally {
+      setBusy(false);
+    }
+  }
+  const label = check?.verdict === 'self'
+    ? tx('O‘zi bajarganga o‘xshaydi', 'Похоже на самостоятельную работу', 'Looks self-made')
+    : check?.verdict === 'ai'
+      ? tx('AI javobiga o‘xshaydi', 'Похоже на ответ нейросети', 'Looks like an AI answer')
+      : tx('Aniq emas — o‘quvchidan so‘rang', 'Неясно — спросите ученика', 'Unclear — ask the student');
+  return (
+    <div className="ai-check">
+      {!check && (
+        <button type="button" className="btn small" disabled={busy} onClick={() => void run()}>
+          🤖 {busy ? tx('Tekshirilmoqda…', 'Проверяем…', 'Checking…') : tx('O‘zi yozdimi yoki AI?', 'Сам писал или ИИ?', 'Self-made or AI?')}
+        </button>
+      )}
+      {check && (
+        <div className={`ai-check-result verdict-${check.verdict}`}>
+          <b>{label} · {check.confidence}%</b>
+          <span className="muted">{check.handwritten ? tx('Qo‘lda yozilgan', 'Написано от руки', 'Handwritten') : tx('Qo‘lda yozilmagan', 'Не от руки', 'Not handwritten')} · {check.matchesTask ? tx('topshiriqqa mos', 'по заданию', 'matches the task') : tx('topshiriqqa mos emas', 'не по заданию', 'off task')}</span>
+          {check.reasons.length > 0 && <ul>{check.reasons.map((reason, index) => <li key={index}>{reason}</li>)}</ul>}
+          {check.advice && <span className="ai-check-advice">💬 {check.advice}</span>}
+          <small className="muted">{tx('Bu faqat maslahat: AI muallifni aniq isbotlay olmaydi. Qarorni o‘qituvchi qabul qiladi.', 'Это только подсказка: ИИ не может доказать авторство. Решение принимает учитель.', 'A hint only: AI cannot prove authorship. The teacher decides.')}</small>
+        </div>
+      )}
+      {error && <span className="muted">{error}</span>}
     </div>
   );
 }

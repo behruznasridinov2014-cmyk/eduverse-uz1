@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import * as pdfjs from 'pdfjs-dist/legacy/build/pdf.mjs';
 import type { PDFDocumentProxy, RenderTask } from 'pdfjs-dist';
 import workerUrl from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url';
@@ -133,9 +134,34 @@ export function PdfViewer({ url, title, language = 'English' }: { url: string; t
     if (event.key === 'ArrowLeft' || event.key === 'PageUp') go(page - 1);
   };
 
-  const zoom = (delta: number) => setScale(Math.min(4, Math.max(0.4, shownScale.current + delta)));
+  const zoom = (delta: number) => {
+    const host = stage.current;
+    // keep the same spot of the page in view while zooming
+    const centerX = host ? (host.scrollLeft + host.clientWidth / 2) / Math.max(1, host.scrollWidth) : 0.5;
+    const centerY = host ? (host.scrollTop + host.clientHeight / 2) / Math.max(1, host.scrollHeight) : 0;
+    setScale(Math.min(3, Math.max(0.4, shownScale.current + delta)));
+    window.setTimeout(() => {
+      const el = stage.current;
+      if (!el) return;
+      el.scrollLeft = centerX * el.scrollWidth - el.clientWidth / 2;
+      el.scrollTop = centerY * el.scrollHeight - el.clientHeight / 2;
+    }, 260);
+  };
 
-  return (
+  useEffect(() => {
+    if (!wide) return;
+    const html = document.documentElement;
+    const previous = html.style.overflow;
+    html.style.overflow = 'hidden';
+    const onEsc = (event: KeyboardEvent) => { if (event.key === 'Escape') setWide(false); };
+    window.addEventListener('keydown', onEsc);
+    return () => {
+      html.style.overflow = previous;
+      window.removeEventListener('keydown', onEsc);
+    };
+  }, [wide]);
+
+  const viewer = (
     <div className={`pdfv ${wide ? 'is-wide' : ''}`} tabIndex={0} onKeyDown={onKey} aria-label={title}>
       <div className="pdfv-bar">
         <button type="button" className="pdfv-btn" onClick={() => go(page - 1)} disabled={page <= 1} aria-label="Previous page">
@@ -187,4 +213,6 @@ export function PdfViewer({ url, title, language = 'English' }: { url: string; t
       </div>
     </div>
   );
+  // Full-screen mode lives on <body> so no parent can clip or shift it.
+  return wide ? createPortal(viewer, document.body) : viewer;
 }

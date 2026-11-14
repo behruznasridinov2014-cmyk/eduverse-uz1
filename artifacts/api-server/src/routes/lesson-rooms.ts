@@ -573,6 +573,25 @@ router.post(
   },
 );
 
+/** The teacher ends every lesson they still have open (one click). */
+router.post(
+  "/rooms/end-all",
+  requireAuthenticatedRole("teacher", "school_director", "school_admin", "education_admin", "ministry_admin", "platform_superadmin"),
+  async (_req, res) => {
+    const viewer = user(res);
+    const open = await db
+      .select({ id: lessonRoomsTable.id })
+      .from(lessonRoomsTable)
+      .where(and(eq(lessonRoomsTable.hostId, viewer.id), ne(lessonRoomsTable.status, "ended")));
+    for (const row of open) {
+      await db.update(lessonRoomsTable).set({ status: "ended", endedAt: new Date() }).where(eq(lessonRoomsTable.id, row.id));
+      await appendSignal(row.id, { from: viewer.id, to: "all", kind: "control", payload: { event: "ended" } });
+      await dropSignals(row.id);
+    }
+    res.json({ ended: open.length });
+  },
+);
+
 router.post(
   "/rooms/:roomId/leave",
   requireAuthenticatedRole("student", "teacher", "school_director", "school_admin", "education_admin", "ministry_admin", "platform_superadmin"),
@@ -673,7 +692,7 @@ router.get(
       return;
     }
     if (!room.topicId) {
-      res.json({ topic: null });
+      res.json({ topic: null, courseKey: room.courseKey ?? null });
       return;
     }
     const [topic] = await db
@@ -681,7 +700,7 @@ router.get(
       .from(lessonTopicsTable)
       .where(eq(lessonTopicsTable.id, room.topicId))
       .limit(1);
-    res.json({ topic: topic ?? null });
+    res.json({ topic: topic ?? null, courseKey: room.courseKey ?? null });
   },
 );
 
@@ -698,6 +717,21 @@ router.put(
     }
     if (room.hostId !== viewer.id && !(await canManage(viewer.id, viewer.role, room.classId))) {
       res.status(403).json({ error: "Only the host can change the lesson topic." });
+      return;
+    }
+    const courseKeyRaw = readString(req.body, "courseKey", 40);
+    if (courseKeyRaw !== undefined) {
+      if (!/^[a-z0-9][a-z0-9.\-]{1,39}$/.test(courseKeyRaw)) {
+        res.status(400).json({ error: "Invalid course topic." });
+        return;
+      }
+      const courseTitle = readString(req.body, "title", 180) ?? "";
+      await db
+        .update(lessonRoomsTable)
+        .set({ courseKey: courseKeyRaw, topicId: null, ...(courseTitle ? { title: courseTitle } : {}) })
+        .where(eq(lessonRoomsTable.id, room.id));
+      await appendSignal(room.id, { from: viewer.id, to: "all", kind: "control", payload: { event: "topic", courseKey: courseKeyRaw } });
+      res.json({ topic: null, courseKey: courseKeyRaw });
       return;
     }
     const topicId = readString(req.body, "topicId", 64) ?? null;
@@ -722,6 +756,7 @@ router.put(
       .update(lessonRoomsTable)
       .set({
         topicId,
+        courseKey: null,
         ...(topic ? { subject: topic.subject, title: topic.title } : {}),
       })
       .where(eq(lessonRoomsTable.id, room.id));

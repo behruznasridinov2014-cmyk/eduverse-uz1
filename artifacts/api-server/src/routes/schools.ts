@@ -1214,6 +1214,60 @@ router.post(
   },
 );
 
+router.post(
+  "/assignments/:assignmentId/submissions/:studentId/ai-check",
+  requireAuthenticatedRole(...ACCOUNT_ROLES),
+  async (req, res) => {
+    if (!requireUuidParams(res, "assignmentId", "studentId")) return;
+    const assignmentId = String(req.params.assignmentId);
+    const studentId = String(req.params.studentId);
+    const user = currentUser(res);
+    const context = await authorizeAssignment(user, assignmentId);
+    if (!context) {
+      res.status(404).json({ error: "Assignment not found." });
+      return;
+    }
+    if (!context.authorization.canReview) {
+      forbidden(res, "Only the teacher can run this check.");
+      return;
+    }
+    const [submission] = await db
+      .select({ id: assignmentSubmissionsTable.id, content: assignmentSubmissionsTable.content })
+      .from(assignmentSubmissionsTable)
+      .where(and(eq(assignmentSubmissionsTable.assignmentId, assignmentId), eq(assignmentSubmissionsTable.studentId, studentId)))
+      .limit(1);
+    if (!submission) {
+      res.status(404).json({ error: "Submission not found." });
+      return;
+    }
+    const [info] = await db
+      .select({ title: assignmentsTable.title, subject: assignmentsTable.subject, description: assignmentsTable.description })
+      .from(assignmentsTable)
+      .where(eq(assignmentsTable.id, assignmentId))
+      .limit(1);
+    const [student] = await db.select({ name: usersTable.username }).from(usersTable).where(eq(usersTable.id, studentId)).limit(1);
+    const photos = await db
+      .select({ data: submissionFilesTable.data })
+      .from(submissionFilesTable)
+      .where(eq(submissionFilesTable.submissionId, submission.id))
+      .orderBy(submissionFilesTable.position)
+      .limit(2);
+    const { analyzeHomework } = await import("../lib/ai-content");
+    const check = await analyzeHomework({
+      subject: info?.subject ?? "",
+      task: `${info?.title ?? ""}. ${info?.description ?? ""}`.slice(0, 600),
+      studentName: student?.name ?? "",
+      explanation: submission.content,
+      photos: photos.map((row) => row.data).filter((data) => data.startsWith("data:image/")),
+    });
+    if (!check) {
+      res.status(503).json({ error: "The AI check is not available right now." });
+      return;
+    }
+    res.json({ check });
+  },
+);
+
 router.get(
   "/assignments/:assignmentId/submissions/:studentId/files",
   requireAuthenticatedRole(...ACCOUNT_ROLES),
